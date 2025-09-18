@@ -1,0 +1,891 @@
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:loto_ro/models/loto_draw.dart';
+import 'package:loto_ro/utils/constants.dart';
+import 'package:loto_ro/services/statistics_calculation_service.dart';
+
+class SumGeneratorDialog extends StatefulWidget {
+  final List<LotoDraw> statsDraws;
+  final GameType selectedGame;
+  final bool isDesktop;
+  final VoidCallback? onClose;
+
+  const SumGeneratorDialog({
+    super.key,
+    required this.statsDraws,
+    required this.selectedGame,
+    this.isDesktop = false,
+    this.onClose,
+  });
+
+  @override
+  State<SumGeneratorDialog> createState() => _SumGeneratorDialogState();
+}
+
+class _SumGeneratorDialogState extends State<SumGeneratorDialog> {
+  String _selectedStrategy = 'Balanced';
+  int nVariants = 5;
+  bool isLoading = false;
+  List<GeneratedVariant> _generatedVariants = [];
+  String _userFeedback = '';
+
+  final List<String> _strategies = [
+    'Balanced',
+    'High Sum',
+    'Low Sum',
+    'Random',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final stats = StatisticsCalculationService().calculateBasicStatistics(
+      widget.statsDraws,
+    );
+    final mainRange = _getMaxNumberForGame(widget.selectedGame);
+
+    return Center(
+      child: Material(
+        color: Colors.transparent,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: widget.isDesktop ? 800 : double.infinity,
+              maxHeight: widget.isDesktop ? 600 : double.infinity,
+              minWidth: widget.isDesktop ? 600 : 0,
+            )
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.28),
+                width: 1.5,
+              )
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.10),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                )
+              ],
+            )
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+              child: Padding(
+                padding: widget.isDesktop
+                    ? const EdgeInsets.symmetric(
+                        vertical: 16,
+                        horizontal: 20,
+                      )
+                    : const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.auto_awesome,
+                              color: const Color(0xFF2ECC40),
+                              size: widget.isDesktop ? 28 : 20,
+                            )
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Generator Sumă',
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppFonts.titleStyle.copyWith(
+                                  fontSize: widget.isDesktop ? 22 : 18,
+                                  fontWeight: FontWeight.w900,
+                                  color: const Color(0xFF2ECC40),
+                                  letterSpacing: 1.1,
+                                )
+                              )
+                            )
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed:
+                                  widget.onClose ??
+                                  () => Navigator.of(context).pop(),
+                            )
+                          ],
+                        )
+                        const SizedBox(height: 18),
+                        // Selectoare - pe o singura linie cu dimensiuni identice
+                        _buildSelectorsRow(),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: isLoading ? null : _onGeneratePressed,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2ECC40),
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.symmetric(
+                                vertical: widget.isDesktop ? 16 : 14,
+                                horizontal: 20,
+                              )
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              )
+                            )
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.max,
+                              children: [
+                                const Icon(
+                                  Icons.auto_awesome,
+                                  color: Colors.white,
+                                  size: 18,
+                                )
+                                const SizedBox(width: 10),
+                                Text(
+                                  'Generează variante',
+                                  style: AppFonts.bodyStyle.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: widget.isDesktop ? 16 : 14,
+                                    color: Colors.white,
+                                  )
+                                )
+                              ],
+                            )
+                          )
+                        )
+                        if (_generatedVariants.isNotEmpty) ...[
+                          const SizedBox(height: 14),
+                          OutlinedButton.icon(
+                            onPressed: _exportVariants,
+                            icon: const Icon(Icons.save_alt, size: 18),
+                            label: Text(
+                              'Exportă variantele',
+                              style: AppFonts.bodyStyle.copyWith(
+                                fontWeight: FontWeight.w600,
+                                fontSize: widget.isDesktop ? 14 : 12,
+                              )
+                            )
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF2ECC40),
+                              side: BorderSide(
+                                color: const Color(
+                                  0xFF2ECC40,
+                                ).withValues(alpha: 0.6),
+                              )
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              )
+                              padding: EdgeInsets.symmetric(
+                                vertical: widget.isDesktop ? 12 : 10,
+                                horizontal: 20,
+                              )
+                            )
+                          )
+                        ],
+                        if (_generatedVariants.isNotEmpty &&
+                            _userFeedback.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Colors.amber.withValues(alpha: 0.3),
+                              )
+                            )
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.lightbulb_outline,
+                                  color: Colors.amber[700],
+                                  size: 20,
+                                )
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    _userFeedback,
+                                    style: AppFonts.bodyStyle.copyWith(
+                                      fontSize: 14,
+                                      color: Colors.amber[800],
+                                    )
+                                  )
+                                )
+                              ],
+                            )
+                          )
+                        ],
+                        const SizedBox(height: 12),
+                        Expanded(
+                          child: _generatedVariants.isNotEmpty
+                              ? _buildVariantsGrid()
+                              : _buildPlaceholder(),
+                        )
+                        const SizedBox(height: 12),
+                        // Card statistici - mutat in footer
+                        _buildStatsCard(false, stats, mainRange),
+                      ],
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    );
+  }
+
+  Widget _buildSelectorsRow() {
+    final isMobile = MediaQuery.of(context).size.width < 768;
+
+    return Row(
+      children: [
+        // Strategy selector - dimensiuni identice
+        Expanded(child: _buildStrategySelector(isMobile)),
+        const SizedBox(width: 12),
+        // Variant count selector - dimensiuni identice
+        Expanded(child: _buildVariantCountSelector(isMobile)),
+      ],
+    );
+  }
+
+  Widget _buildStrategySelector(bool isMobile) {
+    const pastelGreen = Color(0xFF2ECC40);
+    const pastelDarkGray = Color(0xFF6C757D);
+
+    return Container(
+      constraints: const BoxConstraints(minHeight: 40),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: pastelGreen.withValues(alpha: 0.1)),
+      )
+      child: Row(
+        children: [
+          const Icon(Icons.tune, color: pastelGreen, size: 14),
+          const SizedBox(width: 4),
+          Text(
+            'Strategie:',
+            style: AppFonts.captionStyle.copyWith(
+              fontWeight: FontWeight.w600,
+              color: pastelDarkGray,
+              fontSize: 10,
+            )
+          )
+          const SizedBox(width: 4),
+          Expanded(
+            child: DropdownButton<String>(
+              value: _selectedStrategy,
+              isExpanded: true,
+              underline: const SizedBox(),
+              style: AppFonts.bodyStyle.copyWith(
+                fontSize: 11,
+                color: pastelDarkGray,
+                fontWeight: FontWeight.w500,
+              )
+              items: _strategies.map((String strategy) {
+                return DropdownMenuItem<String>(
+                  value: strategy,
+                  child: Text(
+                    strategy,
+                    style: AppFonts.bodyStyle.copyWith(
+                      fontSize: 11,
+                      color: pastelDarkGray,
+                      fontWeight: FontWeight.w500,
+                    )
+                  )
+                );
+              }).toList(),
+              onChanged: (String? newValue) {
+                if (newValue != null) {
+                  setState(() {
+                    _selectedStrategy = newValue;
+                  });
+                }
+              },
+            )
+          )
+        ],
+      )
+    );
+  }
+
+  Widget _buildVariantCountSelector(bool isMobile) {
+    const pastelGreen = Color(0xFF2ECC40);
+    const pastelDarkGray = Color(0xFF6C757D);
+
+    return Container(
+      constraints: const BoxConstraints(minHeight: 40),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: pastelGreen.withValues(alpha: 0.1)),
+      )
+      child: Row(
+        children: [
+          const Icon(Icons.format_list_numbered, color: pastelGreen, size: 14),
+          const SizedBox(width: 4),
+          Text(
+            'Variante:',
+            style: AppFonts.captionStyle.copyWith(
+              fontWeight: FontWeight.w600,
+              color: pastelDarkGray,
+              fontSize: 10,
+            )
+          )
+          const SizedBox(width: 4),
+          IconButton(
+            icon: const Icon(Icons.remove, size: 14),
+            splashRadius: 14,
+            padding: const EdgeInsets.all(4),
+            constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+            onPressed: nVariants > 1 ? () => setState(() => nVariants--) : null,
+          )
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: pastelGreen.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+            )
+            child: Text(
+              '$nVariants',
+              style: AppFonts.bodyStyle.copyWith(
+                fontSize: 11,
+                color: pastelDarkGray,
+                fontWeight: FontWeight.w600,
+              )
+            )
+          )
+          IconButton(
+            icon: const Icon(Icons.add, size: 14),
+            splashRadius: 14,
+            padding: const EdgeInsets.all(4),
+            constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+            onPressed: nVariants < 10
+                ? () => setState(() => nVariants++)
+                : null,
+          )
+        ],
+      )
+    );
+  }
+
+  Widget _buildStatsCard(
+    bool isMobile,
+    Map<String, dynamic> stats,
+    int mainRange,
+  ) {
+    const pastelGreen = Color(0xFF2ECC40);
+    const pastelDarkGray = Color(0xFF6C757D);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: pastelGreen.withValues(alpha: 0.1)),
+      )
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.analytics, color: pastelGreen, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                'Statistici sumă:',
+                style: AppFonts.bodyStyle.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: pastelDarkGray,
+                )
+              )
+            ],
+          )
+          const SizedBox(height: 12),
+          Text(
+            'Extrageri: ${stats['totalDraws']} | Sumă medie: ${(stats['avgSum'] as double).toStringAsFixed(1)}',
+            style: AppFonts.captionStyle.copyWith(
+              color: pastelDarkGray,
+              fontSize: 12,
+            )
+          )
+          const SizedBox(height: 4),
+          Text(
+            'Max: ${stats['maxSum']} | Min: ${stats['minSum']}',
+            style: AppFonts.captionStyle.copyWith(
+              color: pastelDarkGray,
+              fontSize: 12,
+            )
+          )
+          const SizedBox(height: 4),
+          Text(
+            'Sumă mică: ${(stats['avgSmall'] as double).toStringAsFixed(1)} | Sumă mare: ${(stats['avgLarge'] as double).toStringAsFixed(1)}',
+            style: AppFonts.captionStyle.copyWith(
+              color: pastelDarkGray,
+              fontSize: 12,
+            )
+          )
+        ],
+      )
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    const pastelGreen = Color(0xFF2ECC40);
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.auto_awesome_outlined,
+            size: 48,
+            color: pastelGreen.withValues(alpha: 0.6),
+          )
+          const SizedBox(height: 16),
+          Text(
+            'Generează variante pentru a le vedea aici!',
+            style: AppFonts.bodyStyle.copyWith(
+              fontSize: 16,
+              color: pastelGreen,
+              fontWeight: FontWeight.w500,
+            )
+            textAlign: TextAlign.center,
+          )
+        ],
+      )
+    );
+  }
+
+  Widget _buildVariantsGrid() {
+    return ListView.builder(
+      itemCount: _generatedVariants.length,
+      itemBuilder: (context, index) {
+        final variant = _generatedVariants[index];
+        return _buildVariantCard(variant, index);
+      },
+    );
+  }
+
+  Widget _buildVariantCard(GeneratedVariant variant, int index) {
+    const pastelGreen = Color(0xFF2ECC40);
+    const pastelYellow = Color(0xFFFFD700);
+    const pastelBlue = Color(0xFF007AFF);
+    const pastelOrange = Color(0xFFFF8C00);
+    const pastelGray = Color(0xFFF8F9FA);
+    const pastelDarkGray = Color(0xFF6C757D);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.2),
+          width: 1,
+        )
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          )
+        ],
+      )
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                )
+                decoration: BoxDecoration(
+                  color: pastelGreen.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(20),
+                )
+                child: Text(
+                  'VARIANTA ${index + 1}',
+                  style: AppFonts.bodyStyle.copyWith(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: pastelGreen,
+                    letterSpacing: 0.5,
+                  )
+                )
+              )
+              const Spacer(),
+              _ratingBadge(variant.rating, pastelYellow),
+              const SizedBox(width: 8),
+              _uniqueBadge(variant.isUnique, pastelBlue),
+            ],
+          )
+          const SizedBox(height: 16),
+          _buildNumberRow(variant.numbers, pastelGreen),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _miniStatCard(
+                  '${variant.sum}',
+                  'sumă',
+                  Icons.calculate,
+                  pastelGreen,
+                )
+              )
+              const SizedBox(width: 12),
+              Expanded(
+                child: _miniStatCard(
+                  '${variant.evenCount}/${variant.oddCount}',
+                  'Pare/Impare',
+                  Icons.balance,
+                  pastelOrange,
+                )
+              )
+            ],
+          )
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: pastelGray,
+              borderRadius: BorderRadius.circular(8),
+            )
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 16, color: pastelDarkGray),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _generateVariantNarrative(variant),
+                    style: AppFonts.captionStyle.copyWith(
+                      fontSize: 11,
+                      color: pastelDarkGray,
+                      fontWeight: FontWeight.w500,
+                    )
+                  )
+                )
+              ],
+            )
+          )
+        ],
+      )
+    );
+  }
+
+  Widget _ratingBadge(double rating, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      )
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.star, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            rating.toStringAsFixed(1),
+            style: AppFonts.captionStyle.copyWith(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: color,
+            )
+          )
+        ],
+      )
+    );
+  }
+
+  Widget _uniqueBadge(bool isUnique, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      )
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isUnique ? Icons.verified : Icons.content_copy,
+            size: 12,
+            color: color,
+          )
+          const SizedBox(width: 4),
+          Text(
+            isUnique ? 'Unică' : 'Dublă',
+            style: AppFonts.captionStyle.copyWith(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: color,
+            )
+          )
+        ],
+      )
+    );
+  }
+
+  Widget _buildNumberRow(List<int> numbers, Color accent) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: numbers.map((number) {
+        return Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: accent,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: accent.withValues(alpha: 0.3),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              )
+            ],
+          )
+          child: Center(
+            child: Text(
+              '$number',
+              style: AppFonts.bodyStyle.copyWith(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              )
+            )
+          )
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _miniStatCard(String value, String label, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      )
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: AppFonts.bodyStyle.copyWith(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: color,
+            )
+          )
+          Text(
+            label,
+            style: AppFonts.captionStyle.copyWith(fontSize: 10, color: color),
+          )
+        ],
+      )
+    );
+  }
+
+  String _generateVariantNarrative(GeneratedVariant variant) {
+    final parts = <String>[];
+
+    if (variant.sum < 100) {
+      parts.add('sumă mică');
+    } else if (variant.sum > 150) {
+      parts.add('sumă mare');
+    } else {
+      parts.add('sumă echilibrată');
+    }
+
+    if (variant.evenCount > variant.oddCount) {
+      parts.add('predominant pare');
+    } else if (variant.oddCount > variant.evenCount) {
+      parts.add('predominant impare');
+    } else {
+      parts.add('echilibrat pare/impare');
+    }
+
+    return 'Sumă: ${variant.sum} | Pare: ${variant.evenCount}, Impare: ${variant.oddCount} | Frec. medie: ${variant.avgFrequency.toStringAsFixed(1)} | Joker: ${variant.jokerNumber ?? 'N/A'}';
+  }
+
+  void _onGeneratePressed() async {
+    setState(() {
+      isLoading = true;
+      _generatedVariants.clear();
+      _userFeedback = '';
+    });
+
+    try {
+      // Simulate generation delay
+      await Future.delayed(const Duration(milliseconds: 1500));
+
+      // Generate variants based on strategy
+      final variants = _generateVariants();
+
+      if (mounted) {
+        setState(() {
+          _generatedVariants = variants;
+          _userFeedback = _getFeedbackMessage(variants);
+          isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+          _userFeedback = 'Eroare la generarea variantelor: $e';
+        });
+      }
+    }
+  }
+
+  List<GeneratedVariant> _generateVariants() {
+    final variants = <GeneratedVariant>[];
+    final mainRange = _getMaxNumberForGame(widget.selectedGame);
+
+    for (int i = 0; i < nVariants; i++) {
+      final numbers = _generateNumbers(mainRange);
+      final sum = numbers.reduce((a, b) => a + b);
+      final evenCount = numbers.where((n) => n % 2 == 0).length;
+      final oddCount = numbers.length - evenCount;
+
+      variants.add(
+        GeneratedVariant(
+          numbers: numbers,
+          sum: sum,
+          evenCount: evenCount,
+          oddCount: oddCount,
+          rating: _calculateRating(sum, evenCount, oddCount),
+          isUnique: true, // Simplified for now
+          avgFrequency: 200.0, // Simplified for now
+          jokerNumber: widget.selectedGame == GameType.joker
+              ? numbers.last
+              : null,
+        )
+      );
+    }
+
+    return variants;
+  }
+
+  List<int> _generateNumbers(int maxNumber) {
+    final numbers = <int>{};
+    final count = widget.selectedGame == GameType.joker ? 5 : 6;
+
+    while (numbers.length < count) {
+      numbers.add(1 + (DateTime.now().millisecondsSinceEpoch % maxNumber));
+    }
+
+    return numbers.toList()..sort();
+  }
+
+  double _calculateRating(int sum, int evenCount, int oddCount) {
+    double rating = 5.0;
+
+    // Sum-based rating
+    if (sum >= 100 && sum <= 150) {
+      rating += 1.0;
+    }
+    if (sum >= 80 && sum <= 170) {
+      rating += 0.5;
+    }
+
+    // Even/odd balance
+    if (evenCount == oddCount || (evenCount - oddCount).abs() == 1) {
+      rating += 1.0;
+    }
+
+    return rating.clamp(1.0, 10.0);
+  }
+
+  String _getFeedbackMessage(List<GeneratedVariant> variants) {
+    final avgRating =
+        variants.map((v) => v.rating).reduce((a, b) => a + b) / variants.length;
+
+    if (avgRating >= 7.0) {
+      return 'Excelent! Variante foarte bune generate.';
+    } else if (avgRating >= 5.0) {
+      return 'Bun! Variante de calitate decentă.';
+    } else {
+      return 'Decent. Poți încerca o altă strategie.';
+    }
+  }
+
+  void _exportVariants() {
+    if (_generatedVariants.isEmpty) return;
+
+    final buffer = StringBuffer();
+    buffer.writeln(
+      'Variante Generate - ${DateTime.now().toString().split('.')[0]}',
+    );
+    buffer.writeln('Joc: ${widget.selectedGame.toString().split('.').last}');
+    buffer.writeln('Strategie: $_selectedStrategy');
+    buffer.writeln('Numărul de variante: ${_generatedVariants.length}');
+    buffer.writeln('');
+
+    for (int i = 0; i < _generatedVariants.length; i++) {
+      final variant = _generatedVariants[i];
+      buffer.writeln('Varianta ${i + 1}: ${variant.numbers.join(', ')}');
+      buffer.writeln(
+        '  Sumă: ${variant.sum} | Rating: ${variant.rating.toStringAsFixed(1)} | Unică: ${variant.isUnique ? 'Da' : 'Nu'}',
+      );
+      if (variant.jokerNumber != null) {
+        buffer.writeln('  Joker: ${variant.jokerNumber}');
+      }
+      buffer.writeln('');
+    }
+
+    // Copy to clipboard
+    Clipboard.setData(ClipboardData(text: buffer.toString()));
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Variante exportate în clipboard!')),
+    );
+  }
+
+  int _getMaxNumberForGame(GameType game) {
+    switch (game) {
+      case GameType.loto649:
+        return 49;
+      case GameType.loto540:
+        return 40;
+      case GameType.joker:
+        return 45;
+    }
+  }
+}
+
+class GeneratedVariant {
+  final List<int> numbers;
+  final int sum;
+  final int evenCount;
+  final int oddCount;
+  final double rating;
+  final bool isUnique;
+  final double avgFrequency;
+  final int? jokerNumber;
+
+  GeneratedVariant({
+    required this.numbers,
+    required this.sum,
+    required this.evenCount,
+    required this.oddCount,
+    required this.rating,
+    required this.isUnique,
+    required this.avgFrequency,
+    this.jokerNumber,
+  });
+}

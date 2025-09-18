@@ -1,0 +1,1378 @@
+import 'dart:math';
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:loto_ro/models/loto_draw.dart';
+import 'package:loto_ro/utils/constants.dart';
+import 'package:loto_ro/services/statistics_calculation_service.dart';
+
+/// Dialog pentru generarea variantelor bazate pe frecvențele numerelor
+class FrequencyGeneratorDialog extends StatefulWidget {
+  final List<LotoDraw> allDraws;
+  final List<LotoDraw> statsDraws;
+  final GameType selectedGame;
+  final bool isDesktop;
+  final VoidCallback? onClose;
+
+  const FrequencyGeneratorDialog({
+    super.key,
+    required this.allDraws,
+    required this.statsDraws,
+    required this.selectedGame,
+    required this.isDesktop,
+    this.onClose,
+  });
+
+  @override
+  State<FrequencyGeneratorDialog> createState() =>
+      _FrequencyGeneratorDialogState();
+}
+
+class _FrequencyGeneratorDialogState extends State<FrequencyGeneratorDialog> {
+  int nVariants = 5;
+  bool isLoading = false;
+  final List<dynamic> generatedVariants = [];
+  final List<String> variantNarratives = [];
+  final List<double> _variantRatings = [];
+  List<bool> _variantVisible = [];
+  String _userFeedback = '';
+  String _selectedStrategy =
+      'Balanced'; // Balanced, Hot Numbers, Cold Numbers, Mixed
+
+  final List<String> _strategies = [
+    'Balanced',
+    'Hot Numbers',
+    'Cold Numbers',
+    'Mixed Strategy',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final stats = StatisticsCalculationService().calculateBasicStatistics(
+      widget.statsDraws,
+    );
+    final mainRange = _getMaxNumberForGame(widget.selectedGame);
+
+    return Center(
+      child: Material(
+        color: Colors.transparent,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: widget.isDesktop ? 800 : double.infinity,
+              maxHeight: widget.isDesktop ? 600 : double.infinity,
+              minWidth: widget.isDesktop ? 600 : 0,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.28),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.10),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+              child: Padding(
+                padding: widget.isDesktop
+                    ? const EdgeInsets.symmetric(
+                        vertical: 16,
+                        horizontal: 20,
+                      )
+                    : const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.auto_awesome,
+                              color: const Color(0xFF007AFF),
+                              size: widget.isDesktop ? 28 : 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Generator Frecvență',
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppFonts.titleStyle.copyWith(
+                                  fontSize: widget.isDesktop ? 22 : 18,
+                                  fontWeight: FontWeight.w900,
+                                  color: const Color(0xFF007AFF),
+                                  letterSpacing: 1.1,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed:
+                                  widget.onClose ??
+                                  () => Navigator.of(context).pop(),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 18),
+                        // Selectoare - pe o singura linie cu dimensiuni identice
+                        _buildSelectorsRow(),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: isLoading ? null : _onGeneratePressed,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF007AFF),
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.symmetric(
+                                vertical: widget.isDesktop ? 16 : 14,
+                                horizontal: 20,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.max,
+                              children: [
+                                const Icon(
+                                  Icons.auto_awesome,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  'Generează variante',
+                                  style: AppFonts.bodyStyle.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: widget.isDesktop ? 16 : 14,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (generatedVariants.isNotEmpty) ...[
+                          const SizedBox(height: 14),
+                          OutlinedButton.icon(
+                            onPressed: _exportVariants,
+                            icon: const Icon(Icons.save_alt, size: 18),
+                            label: Text(
+                              'Exportă variantele',
+                              style: AppFonts.bodyStyle.copyWith(
+                                fontWeight: FontWeight.w600,
+                                fontSize: widget.isDesktop ? 14 : 12,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF007AFF),
+                              side: BorderSide(
+                                color: const Color(
+                                  0xFF007AFF,
+                                ).withValues(alpha: 0.6),
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              padding: EdgeInsets.symmetric(
+                                vertical: widget.isDesktop ? 12 : 10,
+                                horizontal: 20,
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (generatedVariants.isNotEmpty &&
+                            _userFeedback.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Colors.amber.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.lightbulb_outline,
+                                  color: Colors.amber[700],
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    _userFeedback,
+                                    style: AppFonts.bodyStyle.copyWith(
+                                      fontSize: 14,
+                                      color: Colors.amber[800],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        Expanded(
+                          child: generatedVariants.isNotEmpty
+                              ? _buildVariantsGrid()
+                              : _buildPlaceholder(),
+                        ),
+                        const SizedBox(height: 12),
+                        // Card statistici - mutat in footer
+                        _buildStatsCard(false, stats, mainRange),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCompactHeader(Map<String, dynamic> stats, int mainRange) {
+    const pastelBlue = Color(0xFF007AFF);
+    const pastelDarkGray = Color(0xFF6C757D);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: pastelBlue.withValues(alpha: 0.1)),
+      ),
+      child: Column(
+        children: [
+          // Stats row - compact
+          Row(
+            children: [
+              Icon(Icons.analytics, color: pastelBlue, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                'Statistici:',
+                style: AppFonts.bodyStyle.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: pastelDarkGray,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _buildCompactStat('${stats['totalDraws']}', 'extrageri'),
+                      const SizedBox(width: 8),
+                      _buildCompactStat(
+                        (stats['avgFreq'] as double).toStringAsFixed(1),
+                        'medie',
+                      ),
+                      const SizedBox(width: 8),
+                      _buildCompactStat('${stats['maxFreq']}', 'max'),
+                      const SizedBox(width: 8),
+                      _buildCompactStat('${stats['minFreq']}', 'min'),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Controls row - compact
+          Row(
+            children: [
+              // Strategy selector - compact
+              Expanded(
+                flex: 2,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: pastelBlue.withValues(alpha: 0.15),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.tune, color: pastelBlue, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Strategie:',
+                        style: AppFonts.captionStyle.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: pastelDarkGray,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: DropdownButton<String>(
+                          value: _selectedStrategy,
+                          isExpanded: true,
+                          underline: const SizedBox(),
+                          style: AppFonts.bodyStyle.copyWith(
+                            fontSize: 12,
+                            color: pastelDarkGray,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          items: _strategies.map((String strategy) {
+                            return DropdownMenuItem<String>(
+                              value: strategy,
+                              child: Text(
+                                strategy,
+                                style: AppFonts.bodyStyle.copyWith(
+                                  fontSize: 12,
+                                  color: pastelDarkGray,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (String? newValue) {
+                            if (newValue != null) {
+                              setState(() {
+                                _selectedStrategy = newValue;
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Variant count selector - compact
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: pastelBlue.withValues(alpha: 0.15)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.format_list_numbered,
+                      color: pastelBlue,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Variante:',
+                      style: AppFonts.captionStyle.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: pastelDarkGray,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.remove, size: 16),
+                      splashRadius: 16,
+                      onPressed: nVariants > 1
+                          ? () => setState(() => nVariants--)
+                          : null,
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: pastelBlue.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '$nVariants',
+                        style: AppFonts.bodyStyle.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: pastelBlue,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.add, size: 16),
+                      splashRadius: 16,
+                      onPressed: nVariants < 10
+                          ? () => setState(() => nVariants++)
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompactStat(String value, String label) {
+    const pastelDarkGray = Color(0xFF6C757D);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            style: AppFonts.bodyStyle.copyWith(
+              fontWeight: FontWeight.bold,
+              color: pastelDarkGray,
+              fontSize: 12,
+            ),
+          ),
+          Text(
+            label,
+            style: AppFonts.captionStyle.copyWith(
+              fontSize: 9,
+              color: pastelDarkGray,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatsCard(
+    bool isMobile,
+    Map<String, dynamic> stats,
+    int mainRange,
+  ) {
+    const pastelBlue = Color(0xFF007AFF);
+    const pastelDarkGray = Color(0xFF6C757D);
+
+    return Container(
+      constraints: BoxConstraints(
+        minHeight: isMobile ? 80 : 60,
+        minWidth: isMobile ? 280 : 320,
+        maxWidth: isMobile ? double.infinity : 420, // 2 * 200 + 20 spacing
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.22),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: pastelBlue.withValues(alpha: 0.10)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Statistici frecvență',
+            style: AppFonts.bodyStyle.copyWith(
+              fontWeight: FontWeight.w700,
+              fontSize: isMobile ? 12 : 14,
+              color: pastelBlue,
+            ),
+          ),
+          const SizedBox(height: 4),
+          // Ambele platforme: 3 linii pentru lizibilitate
+          Text(
+            'Extrageri: ${stats['totalDraws']} | Medie frec: ${(stats['avgFreq'] as double).toStringAsFixed(1)}',
+            style: AppFonts.captionStyle.copyWith(
+              color: pastelDarkGray,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Max: ${stats['maxFreq']} | Min: ${stats['minFreq']}',
+            style: AppFonts.captionStyle.copyWith(
+              color: pastelDarkGray,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Range: 1-$mainRange | Numere unice: ${stats['numbers']}',
+            style: AppFonts.captionStyle.copyWith(
+              fontSize: 10,
+              color: pastelDarkGray,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelectorsRow() {
+    final isMobile = MediaQuery.of(context).size.width < 768;
+
+    return Row(
+      children: [
+        // Strategy selector - dimensiuni identice
+        Expanded(child: _buildStrategySelector(isMobile)),
+        const SizedBox(width: 12),
+        // Variant count selector - dimensiuni identice
+        Expanded(child: _buildVariantCountSelector(isMobile)),
+      ],
+    );
+  }
+
+  Widget _buildStrategySelector(bool isMobile) {
+    const pastelBlue = Color(0xFF007AFF);
+    const pastelDarkGray = Color(0xFF6C757D);
+
+    return Container(
+      constraints: const BoxConstraints(minHeight: 40),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: pastelBlue.withValues(alpha: 0.1)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.tune, color: pastelBlue, size: 14),
+          const SizedBox(width: 4),
+          Text(
+            'Strategie:',
+            style: AppFonts.captionStyle.copyWith(
+              fontWeight: FontWeight.w600,
+              color: pastelDarkGray,
+              fontSize: 10,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: DropdownButton<String>(
+              value: _selectedStrategy,
+              isExpanded: true,
+              underline: const SizedBox(),
+              style: AppFonts.bodyStyle.copyWith(
+                fontSize: 11,
+                color: pastelDarkGray,
+                fontWeight: FontWeight.w500,
+              ),
+              items: _strategies.map((String strategy) {
+                return DropdownMenuItem<String>(
+                  value: strategy,
+                  child: Text(
+                    strategy,
+                    style: AppFonts.bodyStyle.copyWith(
+                      fontSize: 11,
+                      color: pastelDarkGray,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                );
+              }).toList(),
+              onChanged: (String? newValue) {
+                if (newValue != null) {
+                  setState(() {
+                    _selectedStrategy = newValue;
+                  });
+                }
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVariantCountSelector(bool isMobile) {
+    const pastelBlue = Color(0xFF007AFF);
+    const pastelDarkGray = Color(0xFF6C757D);
+
+    return Container(
+      constraints: const BoxConstraints(minHeight: 40),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: pastelBlue.withValues(alpha: 0.1)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.format_list_numbered, color: pastelBlue, size: 14),
+          const SizedBox(width: 4),
+          Text(
+            'Variante:',
+            style: AppFonts.captionStyle.copyWith(
+              fontWeight: FontWeight.w600,
+              color: pastelDarkGray,
+              fontSize: 10,
+            ),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            icon: const Icon(Icons.remove, size: 14),
+            splashRadius: 14,
+            padding: const EdgeInsets.all(4),
+            constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+            onPressed: nVariants > 1 ? () => setState(() => nVariants--) : null,
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: pastelBlue.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              '$nVariants',
+              style: AppFonts.bodyStyle.copyWith(
+                fontWeight: FontWeight.bold,
+                color: pastelBlue,
+                fontSize: 11,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.add, size: 14),
+            splashRadius: 14,
+            padding: const EdgeInsets.all(4),
+            constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+            onPressed: nVariants < 10
+                ? () => setState(() => nVariants++)
+                : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder() => Center(
+    child: Text(
+      'Generează variante pentru a le vedea aici!',
+      style: AppFonts.captionStyle.copyWith(
+        color: const Color(0xFF007AFF),
+        fontWeight: FontWeight.w500,
+      ),
+    ),
+  );
+
+  Widget _buildVariantsGrid() {
+    return SingleChildScrollView(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Wrap(
+          spacing: 18,
+          runSpacing: 18,
+          children: List.generate(
+            generatedVariants.length,
+            (i) => ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: _buildVariantCard(i),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVariantCard(int i) {
+    final variant = generatedVariants[i];
+    final narrative = i < variantNarratives.length ? variantNarratives[i] : '';
+    final List<int> mainNumbers = (variant is Map<String, dynamic>)
+        ? (variant['main'] as List<int>)
+        : (variant as List<int>);
+    final sum = mainNumbers.fold(0, (a, b) => a + b);
+    final even = mainNumbers.where((n) => n % 2 == 0).length;
+    final odd = mainNumbers.length - even;
+    final rating = i < _variantRatings.length ? _variantRatings[i] : 0.0;
+    final isUnique = !_isHistoricVariant(variant);
+
+    // Define pastel colors for better contrast and readability
+    const pastelBlue = Color(0xFF007AFF);
+    const pastelGreen = Color(0xFF2ECC40);
+    const pastelOrange = Color(0xFFFF8800);
+    const pastelYellow = Color(0xFFFFC300);
+    const pastelGray = Color(0xFFEDF0F2);
+    const pastelDarkGray = Color(0xFF6C757D);
+
+    return AnimatedOpacity(
+      opacity: _variantVisible.length > i && _variantVisible[i] ? 1 : 0,
+      duration: const Duration(milliseconds: 300),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.50),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.28),
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.10),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: pastelBlue.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: pastelBlue.withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Text(
+                            'VARIANTA ${i + 1}',
+                            style: AppFonts.bodyStyle.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: pastelBlue,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _ratingBadge(rating, pastelYellow),
+                      if (isUnique) ...[
+                        const SizedBox(width: 6),
+                        _uniqueBadge(pastelGreen),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Center(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: _buildNumberRow(
+                          mainNumbers,
+                          variant,
+                          pastelBlue,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _miniStatCard(
+                          Icons.summarize,
+                          '$sum',
+                          'sumă',
+                          pastelGreen,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _miniStatCard(
+                          Icons.balance,
+                          '$even/$odd',
+                          'Pare/Impare',
+                          pastelOrange,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: pastelGray,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          color: pastelDarkGray,
+                          size: 13,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            narrative,
+                            style: AppFonts.captionStyle.copyWith(
+                              fontSize: 11,
+                              color: pastelDarkGray,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildNumberRow(
+    List<int> mainNumbers,
+    dynamic variant,
+    Color accent,
+  ) {
+    final joker = (variant is Map<String, dynamic>) ? variant['joker'] : null;
+    final all = List<int>.from(mainNumbers);
+    return [
+      for (final n in all) _numberBall(n, accent),
+      if (joker != null)
+        Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: _numberBall(joker as int, Colors.purple),
+        ),
+    ];
+  }
+
+  Widget _numberBall(int n, Color color, {double size = 26}) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          colors: [color.withValues(alpha: 0.8), color],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.5),
+            blurRadius: 6,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Text(
+        '$n',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: size * 0.42,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  Widget _ratingBadge(double rating, Color pastelYellow) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+    decoration: BoxDecoration(
+      color: pastelYellow.withValues(alpha: 0.18),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: pastelYellow.withValues(alpha: 0.5)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.star, color: pastelYellow, size: 12),
+        const SizedBox(width: 2),
+        Text(
+          rating.toStringAsFixed(1),
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: pastelYellow,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _uniqueBadge(Color pastelGreen) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+    decoration: BoxDecoration(
+      color: pastelGreen.withValues(alpha: 0.25),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: pastelGreen, width: 1.2),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.fiber_new, color: pastelGreen, size: 12),
+        const SizedBox(width: 2),
+        Text(
+          'Unică',
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: pastelGreen,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _miniStatCard(
+    IconData icon,
+    String value,
+    String label,
+    Color color,
+  ) => Container(
+    height: 60,
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.18),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: color.withValues(alpha: 0.18)),
+    ),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, color: color, size: 18),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: AppFonts.bodyStyle.copyWith(
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        Text(label, style: AppFonts.captionStyle.copyWith(fontSize: 11)),
+      ],
+    ),
+  );
+
+  Future<void> _onGeneratePressed() async {
+    setState(() => isLoading = true);
+    generatedVariants.clear();
+    variantNarratives.clear();
+    _variantVisible = [];
+    await Future.delayed(const Duration(milliseconds: 120));
+    await _generateVariantsLocal();
+    await Future.delayed(const Duration(milliseconds: 120));
+    _calculateVariantRatings();
+    _generateUserFeedback();
+
+    _variantVisible = List<bool>.from(_variantVisible);
+    for (int i = 0; i < generatedVariants.length; i++) {
+      await Future.delayed(const Duration(milliseconds: 120));
+      if (!mounted) return;
+      setState(() {
+        if (_variantVisible.length <= i) {
+          _variantVisible.add(true);
+        } else {
+          _variantVisible[i] = true;
+        }
+      });
+    }
+    if (mounted) setState(() => isLoading = false);
+  }
+
+  Future<void> _generateVariantsLocal() async {
+    final mainRange = _getMaxNumberForGame(widget.selectedGame);
+    final count = widget.selectedGame == GameType.loto649 ? 6 : 5;
+
+    for (int i = 0; i < nVariants; i++) {
+      final variant = _generateFrequencyBasedVariant(mainRange, count, i);
+      generatedVariants.add(variant);
+      variantNarratives.add(_generateVariantNarrative(variant));
+    }
+    setState(
+      () => _variantVisible = List.filled(generatedVariants.length, false),
+    );
+  }
+
+  dynamic _generateFrequencyBasedVariant(
+    int mainRange,
+    int count,
+    int variantIndex,
+  ) {
+    final random = Random();
+    final freq = <int, int>{for (int n = 1; n <= mainRange; n++) n: 0};
+
+    // Calculez frecvențele din datele statistice
+    for (final draw in widget.statsDraws) {
+      for (final n in draw.mainNumbers) {
+        if (n >= 1 && n <= mainRange) {
+          freq[n] = (freq[n] ?? 0) + 1;
+        }
+      }
+    }
+
+    final variant = <int>[];
+    final used = <int>{};
+
+    // Aplică strategia selectată
+    switch (_selectedStrategy) {
+      case 'Hot Numbers':
+        _generateHotNumbersVariant(variant, freq, count, random, used);
+        break;
+      case 'Cold Numbers':
+        _generateColdNumbersVariant(variant, freq, count, random, used);
+        break;
+      case 'Mixed Strategy':
+        _generateMixedVariant(variant, freq, count, random, used);
+        break;
+      default: // Balanced
+        _generateBalancedVariant(variant, freq, count, random, used);
+    }
+
+    // Completează dacă nu sunt suficiente numere
+    while (variant.length < count) {
+      final pick = 1 + random.nextInt(mainRange);
+      if (!variant.contains(pick)) {
+        variant.add(pick);
+      }
+    }
+
+    variant.sort();
+
+    // Adaugă Joker dacă este cazul
+    if (widget.selectedGame == GameType.joker) {
+      final jokerFreq = <int, int>{for (int n = 1; n <= 20; n++) n: 0};
+      for (final d in widget.statsDraws) {
+        if (d.jokerNumber != null) {
+          jokerFreq[d.jokerNumber!] = (jokerFreq[d.jokerNumber!] ?? 0) + 1;
+        }
+      }
+      final joker = _weightedRandomPick(jokerFreq, random, {});
+      return {'main': variant, 'joker': joker};
+    }
+
+    return variant;
+  }
+
+  void _generateHotNumbersVariant(
+    List<int> variant,
+    Map<int, int> freq,
+    int count,
+    Random random,
+    Set<int> used,
+  ) {
+    final sortedFreq = freq.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final hotNumbers = sortedFreq.take(count * 2).map((e) => e.key).toList();
+
+    while (variant.length < count && hotNumbers.isNotEmpty) {
+      final pick = hotNumbers[random.nextInt(hotNumbers.length)];
+      if (!variant.contains(pick)) {
+        variant.add(pick);
+        hotNumbers.remove(pick);
+      }
+    }
+  }
+
+  void _generateColdNumbersVariant(
+    List<int> variant,
+    Map<int, int> freq,
+    int count,
+    Random random,
+    Set<int> used,
+  ) {
+    final sortedFreq = freq.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    final coldNumbers = sortedFreq.take(count * 2).map((e) => e.key).toList();
+
+    while (variant.length < count && coldNumbers.isNotEmpty) {
+      final pick = coldNumbers[random.nextInt(coldNumbers.length)];
+      if (!variant.contains(pick)) {
+        variant.add(pick);
+        coldNumbers.remove(pick);
+      }
+    }
+  }
+
+  void _generateMixedVariant(
+    List<int> variant,
+    Map<int, int> freq,
+    int count,
+    Random random,
+    Set<int> used,
+  ) {
+    final sortedFreq = freq.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final hotNumbers = sortedFreq.take(count).map((e) => e.key).toList();
+    final coldNumbers = sortedFreq.reversed
+        .take(count)
+        .map((e) => e.key)
+        .toList();
+
+    final hotCount = count ~/ 2;
+    final coldCount = count - hotCount;
+
+    // Adaugă numere calde
+    for (int i = 0; i < hotCount && hotNumbers.isNotEmpty; i++) {
+      final pick = hotNumbers[random.nextInt(hotNumbers.length)];
+      if (!variant.contains(pick)) {
+        variant.add(pick);
+        hotNumbers.remove(pick);
+      }
+    }
+
+    // Adaugă numere reci
+    for (int i = 0; i < coldCount && coldNumbers.isNotEmpty; i++) {
+      final pick = coldNumbers[random.nextInt(coldNumbers.length)];
+      if (!variant.contains(pick)) {
+        variant.add(pick);
+        coldNumbers.remove(pick);
+      }
+    }
+  }
+
+  void _generateBalancedVariant(
+    List<int> variant,
+    Map<int, int> freq,
+    int count,
+    Random random,
+    Set<int> used,
+  ) {
+    while (variant.length < count) {
+      final pick = _weightedRandomPick(freq, random, used);
+      if (!variant.contains(pick)) {
+        variant.add(pick);
+        used.add(pick);
+      }
+    }
+  }
+
+  int _weightedRandomPick(Map<int, int> freq, Random random, Set<int> exclude) {
+    final entries = freq.entries
+        .where((e) => !exclude.contains(e.key))
+        .toList();
+    if (entries.isEmpty) return 1;
+
+    final maxFreq = entries
+        .map((e) => e.value)
+        .fold<int>(0, (a, b) => a > b ? a : b);
+    int total = 0;
+    for (final e in entries) {
+      final rarityBonus = maxFreq - e.value + 1;
+      total += e.value + 1 + rarityBonus;
+    }
+
+    int r = random.nextInt(total);
+    int sum = 0;
+    for (final e in entries) {
+      final rarityBonus = maxFreq - e.value + 1;
+      sum += e.value + 1 + rarityBonus;
+      if (r < sum) return e.key;
+    }
+    return entries.first.key;
+  }
+
+  String _generateVariantNarrative(dynamic variant) {
+    try {
+      final List<int> nums = (variant is Map<String, dynamic>)
+          ? (variant['main'] as List<int>)
+          : (variant as List<int>);
+      final sum = nums.fold(0, (a, b) => a + b);
+      final even = nums.where((n) => n % 2 == 0).length;
+      final odd = nums.length - even;
+
+      String narrative = 'Sumă: $sum | Pare: $even, Impare: $odd';
+
+      // Analiză frecvență
+      final freq = <int, int>{
+        for (int n = 1; n <= _getMaxNumberForGame(widget.selectedGame); n++)
+          n: 0,
+      };
+      for (final draw in widget.statsDraws) {
+        for (final n in draw.mainNumbers) {
+          if (n >= 1 && n <= _getMaxNumberForGame(widget.selectedGame)) {
+            freq[n] = (freq[n] ?? 0) + 1;
+          }
+        }
+      }
+
+      final variantFreqs = nums.map((n) => freq[n] ?? 0).toList();
+      final totalFreq = variantFreqs.fold(0, (a, b) => a + b);
+      final avgFreq = variantFreqs.isNotEmpty
+          ? totalFreq / variantFreqs.length
+          : 0;
+
+      narrative += ' | Frec. medie: ${avgFreq.toStringAsFixed(1)}';
+
+      if (variant is Map<String, dynamic> && variant.containsKey('joker')) {
+        narrative += ' | Joker: ${variant['joker']}';
+      }
+
+      return narrative;
+    } catch (e) {
+      return 'Narativă indisponibilă';
+    }
+  }
+
+  void _calculateVariantRatings() {
+    _variantRatings.clear();
+    for (final variant in generatedVariants) {
+      final List<int> nums = (variant is Map<String, dynamic>)
+          ? (variant['main'] as List<int>)
+          : (variant as List<int>);
+      double rating = 0;
+
+      // Diversitate
+      rating += (nums.toSet().length / nums.length) * 2;
+
+      // Balanță par/impar
+      final even = nums.where((n) => n % 2 == 0).length;
+      final odd = nums.length - even;
+      final balance = (even - odd).abs();
+      if (balance <= 1) {
+        rating += 2;
+      } else if (balance <= 2) {
+        rating += 1;
+      }
+
+      // Sumă rezonabilă
+      final sum = nums.fold(0, (a, b) => a + b);
+      final stats = StatisticsCalculationService().calculateBasicStatistics(
+        widget.statsDraws,
+      );
+      final avgSum = stats['avgSum'] as double;
+      final diff = (sum - avgSum).abs();
+      if (diff < 10) {
+        rating += 2;
+      } else if (diff < 20) {
+        rating += 1;
+      }
+
+      // Unicitate
+      if (!_isHistoricVariant(variant)) {
+        rating += 2;
+      }
+
+      _variantRatings.add(rating);
+    }
+  }
+
+  bool _isHistoricVariant(dynamic variant) {
+    final setVariant = Set.of(
+      (variant is Map<String, dynamic>)
+          ? variant['main'] as List<int>
+          : variant as List<int>,
+    );
+    return widget.statsDraws.any((draw) {
+      final drawSet = Set.of(draw.mainNumbers);
+      return drawSet.length == setVariant.length &&
+          drawSet.difference(setVariant).isEmpty;
+    });
+  }
+
+  void _generateUserFeedback() {
+    if (generatedVariants.isEmpty) return;
+
+    final avg = _variantRatings.isNotEmpty
+        ? _variantRatings.reduce((a, b) => a + b) / _variantRatings.length
+        : 0;
+    final uniqueCount = generatedVariants
+        .map((v) => v.toString())
+        .toSet()
+        .length;
+    final historicHits = _countHistoricHits(generatedVariants);
+
+    String feedback = '';
+    if (avg >= 8) {
+      feedback = 'Excelent! Variante foarte bune generate.';
+    } else if (avg >= 6) {
+      feedback = 'Bun! Variante de calitate decentă.';
+    } else if (avg >= 4) {
+      feedback = 'Decent. Poți încerca o altă strategie.';
+    } else {
+      feedback = 'Slab. Recomand să schimbi strategia.';
+    }
+
+    if (uniqueCount < generatedVariants.length * 0.8) {
+      feedback += ' Mai multă diversitate recomandată.';
+    }
+
+    if (historicHits > 0) {
+      feedback += ' $historicHits variante găsite în istoric!';
+    }
+
+    setState(() => _userFeedback = feedback);
+  }
+
+  int _countHistoricHits(List<dynamic> variants) {
+    int hits = 0;
+    for (final v in variants) {
+      if (_isHistoricVariant(v)) hits++;
+    }
+    return hits;
+  }
+
+  void _exportVariants() {
+    final now = DateTime.now();
+    final gameName = widget.selectedGame == GameType.loto649
+        ? 'Loto 6/49'
+        : (widget.selectedGame == GameType.loto540 ? 'Loto 5/40' : 'Joker');
+    String text =
+        '=== FREQUENCY GENERATOR ===\nJoc: $gameName\nStrategie: $_selectedStrategy\nData: ${now.day}/${now.month}/${now.year}\nVariante: ${generatedVariants.length}\n\n';
+
+    for (int i = 0; i < generatedVariants.length; i++) {
+      final variant = generatedVariants[i];
+      final nums = (variant is Map<String, dynamic>)
+          ? variant['main'] as List<int>
+          : variant as List<int>;
+      final joker = (variant is Map<String, dynamic>) ? variant['joker'] : null;
+      text += 'Variantă ${i + 1}: ${nums.join(' - ')}';
+      if (joker != null) text += ' | Joker: $joker';
+      text +=
+          '\nNarativă: ${variantNarratives[i]}\nRating: ${_variantRatings[i].toStringAsFixed(1)}\n\n';
+    }
+
+    text +=
+        'Unice: ${generatedVariants.map((v) => v.toString()).toSet().length}/${generatedVariants.length}\n';
+    text +=
+        'Istoric: ${_countHistoricHits(generatedVariants)}/${generatedVariants.length}\n';
+
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Variante copiate!')));
+  }
+
+  int _getMaxNumberForGame(GameType game) {
+    switch (game) {
+      case GameType.loto649:
+        return 49;
+      case GameType.loto540:
+        return 40;
+      case GameType.joker:
+        return 45;
+    }
+  }
+}
